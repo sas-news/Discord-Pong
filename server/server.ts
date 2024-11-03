@@ -69,6 +69,8 @@ wss.on("connection", (ws, req) => {
   console.log(`Client connected to channel: ${channel}`);
 
   ws.on("message", (data, isBinary) => {
+    console.log("Received data:", data.toString());
+
     try {
       const message = JSON.parse(data.toString());
       if (!channels[channel].data) {

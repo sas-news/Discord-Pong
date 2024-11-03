@@ -1,12 +1,112 @@
 import React, { useEffect, useRef, useState } from "react";
+import { Types } from "@discord/embedded-app-sdk";
+import discordSdk, { setupDiscordSdk } from "./Discord";
+import LoadingPage from "./Loading";
+import useWebSocket from "./Socket";
 import * as THREE from "three";
+
+type Auth = {
+  access_token: string;
+  user: {
+    username: string;
+    discriminator: string;
+    id: string;
+    public_flags: number;
+    avatar?: string | null | undefined;
+    global_name?: string | null | undefined;
+  };
+  scopes: any[];
+  expires: string;
+  application: {
+    id: string;
+    description: string;
+    name: string;
+    icon?: string | null | undefined;
+    rpc_origins?: string[] | undefined;
+  };
+};
 
 const App: React.FC = () => {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [playerPosition, setPlayerPosition] = useState(0);
   const [gameStarted, setGameStarted] = useState(false);
   const [gameWinner, setGameWinner] = useState("");
   const keysPressed = useRef<{ [key: string]: boolean }>({});
+  const [auth, setAuth] = useState<Auth>();
+  const [isLoading, setIsLoading] = useState(true);
+  const [playerList, setPlayerList] = useState<
+    Types.GetActivityInstanceConnectedParticipantsResponse["participants"]
+  >([]);
+  const [playerId, setPlayerId] = useState(0);
+  const [socket, addSocket] = useWebSocket();
+  const playerPaddleRef = useRef<THREE.Mesh>();
+
+  useEffect(() => {
+    setupDiscordSdk().then((authToken) => {
+      console.log("Discord SDK is authenticated", authToken);
+      setAuth(authToken);
+      setIsLoading(false);
+      if (authToken?.user.username === "sasnews") {
+        addSocket({
+          player1: {
+            username: authToken?.user.username || "",
+            position: 0,
+            refl: false,
+            score: 0,
+            date: Date.now(),
+          },
+        });
+        setPlayerId(1);
+      } else if (
+        (socket?.player2?.date &&
+          Math.abs(socket?.player2?.date - Date.now()) > 1000) ||
+        !socket?.player2?.date
+      ) {
+        addSocket({
+          player2: {
+            username: authToken?.user.username || "",
+            position: 0,
+            refl: false,
+            score: 0,
+            date: Date.now(),
+          },
+        });
+        setPlayerId(2);
+      } else {
+        console.log("すでに2人以上が参加しています");
+        window.alert("すでに2人以上が参加しています");
+      }
+    });
+  }, []);
+
+  const appendPlayer = async (
+    participants: Types.GetActivityInstanceConnectedParticipantsResponse["participants"]
+  ) => {
+    setPlayerList(participants);
+  };
+
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      const { participants } =
+        await discordSdk.commands.getInstanceConnectedParticipants();
+
+      const extractUsernames = (
+        list: Types.GetActivityInstanceConnectedParticipantsResponse["participants"]
+      ) => list.map((player) => player.username);
+
+      const participantUsernames = extractUsernames(participants);
+      const playerListUsernames = extractUsernames(playerList);
+
+      if (
+        JSON.stringify(participantUsernames) !==
+        JSON.stringify(playerListUsernames)
+      ) {
+        console.log("プレイヤー更新");
+        appendPlayer(participants);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [playerList]);
 
   useEffect(() => {
     if (!gameStarted) return;
@@ -21,8 +121,8 @@ const App: React.FC = () => {
     );
 
     // カメラの位置と角度を設定
-    camera.position.set(0, 10, 10); // カメラを上方と奥に配置
-    camera.lookAt(0, 0, 0); // 中央を見下ろすように設定
+    camera.position.set(0, 5, 6); // カメラを上方と奥に配置
+    camera.lookAt(0, 0, 2.5); // 中央を見下ろすように設定
 
     const renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -64,6 +164,7 @@ const App: React.FC = () => {
 
     // プレイヤーのパドル（上端に配置）
     const playerPaddle = createPaddle(0xffffff, -4.5);
+    playerPaddleRef.current = playerPaddle;
 
     // 敵プレイヤーのパドル（下端に配置）
     const enemyPaddle = createPaddle(0xffffff, 4.5);
@@ -112,10 +213,14 @@ const App: React.FC = () => {
       ) {
         enemyPaddle.position.x += paddleSpeed;
       }
-      setPlayerPosition(enemyPaddle.position.x);
-
-      // 敵プレイヤーのパドルの移動
-      playerPaddle.position.x = ball.position.x;
+      if (socket) {
+        const updatedPlayer = {
+          ...socket[`player${playerId}` as keyof typeof socket],
+          position: enemyPaddle.position.x,
+          date: Date.now(),
+        };
+        addSocket({ [`player${playerId}`]: updatedPlayer });
+      }
 
       // ボールの移動
       ball.position.x += ballDirection.x * ballSpeed;
@@ -166,26 +271,46 @@ const App: React.FC = () => {
       window.removeEventListener("keyup", handleKeyUp);
       mountRef.current?.removeChild(renderer.domElement);
     };
-  }, [gameStarted]);
+  }, [gameStarted, isLoading]);
+
+  useEffect(() => {
+    if (playerPaddleRef.current && socket?.player1?.position !== undefined) {
+      playerPaddleRef.current.position.x = socket.player1.position;
+    }
+  }, [socket]);
 
   const startGame = () => {
     setGameStarted(true);
   };
 
   const endGame = (winner: string) => {
-    setGameStarted(false);
     setGameWinner(winner);
   };
+
+  if (isLoading) {
+    return <LoadingPage />;
+  }
 
   return (
     <div ref={mountRef} className="canvas">
       <div className="gameUI">
         {!gameStarted && (
-          <button onClick={startGame} className="startBtn">
-            スタート
-          </button>
+          <>
+            <div>
+              {playerList.map((player) => (
+                <span key={player.id}>
+                  {player.nickname ? player.nickname : player.global_name}
+                </span>
+              ))}
+            </div>
+
+            <button onClick={startGame} className="startBtn">
+              スタート
+            </button>
+
+            {gameWinner && <p>勝者：{gameWinner}</p>}
+          </>
         )}
-        {gameWinner && <p>前回の勝者：{gameWinner}</p>}
       </div>
     </div>
   );

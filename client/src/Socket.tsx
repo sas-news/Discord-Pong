@@ -3,8 +3,21 @@ import ReconnectingWebSocket from "reconnecting-websocket";
 import discordSdk from "./Discord";
 
 type SocketData = {
-  btn?: string;
-  quizmaster?: string | null;
+  player1?: {
+    username: string;
+    position: number;
+    refl: boolean;
+    score: number;
+    date: number;
+  };
+  player2?: {
+    username: string;
+    position: number;
+    refl: boolean;
+    score: number;
+    date: number;
+  };
+  ballPosition?: { x: number; y: number };
 };
 
 const url = `wss://${
@@ -12,19 +25,29 @@ const url = `wss://${
 }.discordsays.com/.proxy/api/ws?channel=${discordSdk.channelId}`;
 
 const useWebSocket = (): [SocketData | null, (data: SocketData) => void] => {
-  const [socketPush, setSocketPush] = useState<SocketData | null>(null);
   const [socketPull, setSocketPull] = useState<SocketData | null>(null);
-
+  const [socketPush, setSocketPush] = useState<SocketData | null>(null);
   const webSocketRef = useRef<ReconnectingWebSocket>();
 
   useEffect(() => {
     const socket = new ReconnectingWebSocket(url);
     webSocketRef.current = socket;
-    console.log("そけおおおおんんん");
+
+    socket.onopen = () => {
+      console.log("WebSocket connection established");
+    };
 
     socket.onmessage = (event) => {
       const socketData = JSON.parse(event.data);
       setSocketPull(socketData);
+    };
+
+    socket.onerror = (error) => {
+      console.error("WebSocket error:", error);
+    };
+
+    socket.onclose = () => {
+      console.log("WebSocket connection closed");
     };
 
     return () => socket.close();
