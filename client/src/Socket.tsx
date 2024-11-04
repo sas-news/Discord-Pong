@@ -6,18 +6,15 @@ type SocketData = {
   player1?: {
     username: string;
     position: number;
-    refl: boolean;
-    score: number;
     date: number;
   };
   player2?: {
     username: string;
     position: number;
-    refl: boolean;
-    score: number;
     date: number;
   };
   ballPosition?: { x: number; y: number };
+  gameStatus?: boolean;
 };
 
 const url = `wss://${

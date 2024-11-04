@@ -28,8 +28,8 @@ type Auth = {
 
 const App: React.FC = () => {
   const mountRef = useRef<HTMLDivElement>(null);
+  const fpsRef = useRef<HTMLDivElement>(null);
   const [gameStarted, setGameStarted] = useState(false);
-  const [gameWinner, setGameWinner] = useState("");
   const keysPressed = useRef<{ [key: string]: boolean }>({});
   const [auth, setAuth] = useState<Auth>();
   const [isLoading, setIsLoading] = useState(true);
@@ -39,25 +39,26 @@ const App: React.FC = () => {
   const [playerId, setPlayerId] = useState(0);
   const [socket, addSocket] = useWebSocket();
   const playerPaddleRef = useRef<THREE.Mesh>();
+  const enemyPaddleRef = useRef<THREE.Mesh>();
+  const ballRef = useRef<THREE.Mesh>();
 
   useEffect(() => {
     setupDiscordSdk().then((authToken) => {
       console.log("Discord SDK is authenticated", authToken);
       setAuth(authToken);
       setIsLoading(false);
-      if (authToken?.user.username === "sasnews") {
+      if (!socket?.gameStatus && authToken?.user.username === "sasnews") {
         addSocket({
           player1: {
             username: authToken?.user.username || "",
             position: 0,
-            refl: false,
-            score: 0,
             date: Date.now(),
           },
         });
         setPlayerId(1);
       } else if (
-        (socket?.player2?.date &&
+        (!socket?.gameStatus &&
+          socket?.player2?.date &&
           Math.abs(socket?.player2?.date - Date.now()) > 1000) ||
         !socket?.player2?.date
       ) {
@@ -65,8 +66,6 @@ const App: React.FC = () => {
           player2: {
             username: authToken?.user.username || "",
             position: 0,
-            refl: false,
-            score: 0,
             date: Date.now(),
           },
         });
@@ -121,12 +120,12 @@ const App: React.FC = () => {
     );
 
     // カメラの位置と角度を設定
-    camera.position.set(0, 5, 6); // カメラを上方と奥に配置
-    camera.lookAt(0, 0, 2.5); // 中央を見下ろすように設定
+    camera.position.set(0, 5, 6);
+    camera.lookAt(0, 0, 2.5);
 
     const renderer = new THREE.WebGLRenderer();
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.shadowMap.enabled = true; // 影のレンダリングを有効にする
+    renderer.shadowMap.enabled = true;
     mountRef.current?.appendChild(renderer.domElement);
 
     // フィールドを追加
@@ -135,7 +134,7 @@ const App: React.FC = () => {
 
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
     directionalLight.position.set(5, 10, 7.5);
-    directionalLight.castShadow = true; // 影をキャストする
+    directionalLight.castShadow = true;
     scene.add(directionalLight);
 
     // ゲームフィールドの境界
@@ -145,45 +144,47 @@ const App: React.FC = () => {
       side: THREE.DoubleSide,
     });
     const field = new THREE.Mesh(fieldGeometry, fieldMaterial);
-    field.rotation.x = -Math.PI / 2; // フィールドを水平に配置
-    field.receiveShadow = true; // 影を受け取る
+    field.rotation.x = -Math.PI / 2;
+    field.receiveShadow = true;
     scene.add(field);
 
-    // パドル生成関数
+    // パドル生成
     const createPaddle = (color: number, positionZ: number) => {
       const paddleGeometry = new THREE.BoxGeometry(2, 0.2, 0.5);
       const paddleMaterial = new THREE.MeshStandardMaterial({ color });
       const paddle = new THREE.Mesh(paddleGeometry, paddleMaterial);
-      paddle.position.y = 0.1; // 少し浮かせる
-      paddle.position.z = positionZ; // 指定された位置に配置
-      paddle.castShadow = true; // 影をキャストする
-      paddle.receiveShadow = true; // 影を受け取る
+      paddle.position.y = 0.1;
+      paddle.position.z = positionZ;
+      paddle.castShadow = true;
+      paddle.receiveShadow = true;
       scene.add(paddle);
       return paddle;
     };
 
-    // プレイヤーのパドル（上端に配置）
+    // プレイヤーのパドル
     const playerPaddle = createPaddle(0xffffff, -4.5);
     playerPaddleRef.current = playerPaddle;
 
-    // 敵プレイヤーのパドル（下端に配置）
+    // 敵プレイヤーのパドル
     const enemyPaddle = createPaddle(0xffffff, 4.5);
+    enemyPaddleRef.current = enemyPaddle;
 
     // ボール
     const ballGeometry = new THREE.SphereGeometry(0.2, 32, 32);
     const ballMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000 });
     const ball = new THREE.Mesh(ballGeometry, ballMaterial);
-    ball.position.set(0, 0.2, 0); // 少し浮かせる
-    ball.castShadow = true; // 影をキャストする
-    ball.receiveShadow = true; // 影を受け取る
+    ball.position.set(0, 0.2, 0);
+    ball.castShadow = true;
+    ball.receiveShadow = true;
     scene.add(ball);
+    ballRef.current = ball;
 
     // ボールの速度と方向をランダムに設定
     let ballDirection = new THREE.Vector2(
       Math.random() < 0.5 ? -1 : 1,
       Math.random() < 0.5 ? -1 : 1
     ).normalize();
-    const ballSpeed = 0.05;
+    let ballSpeed = 0.05;
 
     // パドル移動関数
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -194,12 +195,30 @@ const App: React.FC = () => {
       keysPressed.current[event.key] = false;
     };
 
+    // FPS計算用
+    let lastFrameTime = performance.now();
+    let frameCount = 0;
+    let fps = 0;
+
     // ゲームのアニメーションループ
     const animate = () => {
       requestAnimationFrame(animate);
 
+      // FPS計算
+      const now = performance.now();
+      frameCount++;
+      const delta = now - lastFrameTime;
+      if (delta >= 1000) {
+        fps = frameCount;
+        frameCount = 0;
+        lastFrameTime = now;
+        if (fpsRef.current) {
+          fpsRef.current.innerText = `FPS: ${fps}`;
+        }
+      }
+
       // パドルの移動
-      const paddleSpeed = 0.3;
+      const paddleSpeed = fps ? 18 / fps : 0;
       const paddleBoundary = 5 - 1;
       if (
         (keysPressed.current["a"] || keysPressed.current["ArrowLeft"]) &&
@@ -213,57 +232,67 @@ const App: React.FC = () => {
       ) {
         enemyPaddle.position.x += paddleSpeed;
       }
-      if (socket) {
-        const updatedPlayer = {
-          ...socket[`player${playerId}` as keyof typeof socket],
-          position: enemyPaddle.position.x,
-          date: Date.now(),
+
+      const updatedPlayer = {
+        position: enemyPaddle.position.x,
+        date: Date.now(),
+        username: auth?.user.username || "",
+      };
+      if (playerId === 1) {
+        // ボールの移動
+        ball.position.x += ballDirection.x * ballSpeed;
+        ball.position.z += ballDirection.y * ballSpeed;
+        const updatedBall = {
+          x: ball.position.x,
+          y: ball.position.z,
         };
-        addSocket({ [`player${playerId}`]: updatedPlayer });
+
+        // 壁との衝突処理
+        if (ball.position.x >= 4.9 || ball.position.x <= -4.9) {
+          ballDirection.x *= -1;
+        }
+        if (ball.position.z >= 4.9 || ball.position.z <= -4.9) {
+          ball.position.x = 0;
+          ball.position.z = 0;
+          ballSpeed = fps ? 3 / fps : 0;
+          ballDirection = new THREE.Vector2(
+            Math.random() < 0.5 ? -1 : 1,
+            Math.random() < 0.5 ? -1 : 1
+          ).normalize();
+        }
+
+        // プレイヤーのパドルとの衝突判定
+        if (
+          ball.position.z >= 4.1 &&
+          ball.position.x >= enemyPaddle.position.x - 1 &&
+          ball.position.x <= enemyPaddle.position.x + 1 &&
+          ballDirection.y > 0
+        ) {
+          ballDirection.y *= -1;
+          ballSpeed += fps ? 1.5 / fps : 0;
+        }
+
+        // 敵プレイヤーのパドルとの衝突判定
+        if (
+          ball.position.z <= -4.1 &&
+          ball.position.x >= playerPaddle.position.x - 1 &&
+          ball.position.x <= playerPaddle.position.x + 1 &&
+          ballDirection.y < 0
+        ) {
+          ballDirection.y *= -1;
+          ballSpeed += fps ? 1.5 / fps : 0;
+        }
+
+        addSocket({ player1: updatedPlayer, ballPosition: updatedBall });
+      } else if (playerId === 2) {
+        addSocket({ player2: updatedPlayer });
       }
 
-      // ボールの移動
-      ball.position.x += ballDirection.x * ballSpeed;
-      ball.position.z += ballDirection.y * ballSpeed;
-
-      // 壁との衝突処理
-      if (ball.position.x >= 4.9 || ball.position.x <= -4.9) {
-        ballDirection.x *= -1;
-      }
-      if (ball.position.z >= 4.9) {
-        endGame("敵プレイヤー");
-      }
-      if (ball.position.z <= -4.9) {
-        endGame("プレイヤー");
-      }
-
-      // プレイヤーのパドルとの衝突判定
-      if (
-        ball.position.z >= 4.1 &&
-        ball.position.z <= 4.2 &&
-        ball.position.x >= enemyPaddle.position.x - 1 &&
-        ball.position.x <= enemyPaddle.position.x + 1
-      ) {
-        ballDirection.y *= -1;
-      }
-
-      // 敵プレイヤーのパドルとの衝突判定
-      if (
-        ball.position.z <= -4.1 &&
-        ball.position.z >= -4.2 &&
-        ball.position.x >= playerPaddle.position.x - 1 &&
-        ball.position.x <= playerPaddle.position.x + 1
-      ) {
-        ballDirection.y *= -1;
-      }
-
-      // 描画
       renderer.render(scene, camera);
     };
 
     animate();
 
-    // イベントリスナーの追加とクリーンアップ
     window.addEventListener("keydown", handleKeyDown);
     window.addEventListener("keyup", handleKeyUp);
     return () => {
@@ -274,17 +303,37 @@ const App: React.FC = () => {
   }, [gameStarted, isLoading]);
 
   useEffect(() => {
-    if (playerPaddleRef.current && socket?.player1?.position !== undefined) {
-      playerPaddleRef.current.position.x = socket.player1.position;
+    if (playerId === 1) {
+      if (playerPaddleRef.current && socket?.player2) {
+        playerPaddleRef.current.position.x = socket.player2.position * -1;
+      }
+    } else if (playerId === 2) {
+      if (playerPaddleRef.current && socket?.player1) {
+        playerPaddleRef.current.position.x = socket.player1.position * -1;
+      }
+      if (ballRef.current && socket?.ballPosition) {
+        ballRef.current.position.x = socket.ballPosition.x * -1;
+        ballRef.current.position.z = socket.ballPosition.y * -1;
+      }
+    } else {
+      if (playerPaddleRef.current && socket?.player1) {
+        playerPaddleRef.current.position.x = socket.player1.position;
+      }
+      if (enemyPaddleRef.current && socket?.player2) {
+        enemyPaddleRef.current.position.x = socket.player2.position;
+      }
+      if (ballRef.current && socket?.ballPosition) {
+        ballRef.current.position.x = socket.ballPosition.x;
+        ballRef.current.position.z = socket.ballPosition.y;
+      }
+    }
+    if (socket?.gameStatus && socket?.gameStatus !== gameStarted) {
+      setGameStarted(socket?.gameStatus);
     }
   }, [socket]);
 
   const startGame = () => {
-    setGameStarted(true);
-  };
-
-  const endGame = (winner: string) => {
-    setGameWinner(winner);
+    addSocket({ gameStatus: true });
   };
 
   if (isLoading) {
@@ -293,6 +342,19 @@ const App: React.FC = () => {
 
   return (
     <div ref={mountRef} className="canvas">
+      <div
+        ref={fpsRef}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          color: "white",
+          padding: "10px",
+          backgroundColor: "rgba(0, 0, 0, 0.5)",
+        }}
+      >
+        FPS: 0
+      </div>
       <div className="gameUI">
         {!gameStarted && (
           <>
@@ -307,8 +369,6 @@ const App: React.FC = () => {
             <button onClick={startGame} className="startBtn">
               スタート
             </button>
-
-            {gameWinner && <p>勝者：{gameWinner}</p>}
           </>
         )}
       </div>
