@@ -17,6 +17,6 @@ export default defineConfig({
       clientPort: 443,
     },
     plugins: [react()],
-    allowedHosts: ["syracuse-oriental-aging-spy.trycloudflare.com"],
+    allowedHosts: [process.env.ALLOWED_HOST],
   },
 });
