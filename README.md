@@ -1,4 +1,4 @@
-# Discord Pong Next
+# Discord Pong
 
 Discord のアクティビティ上で Pong を遊ぶためのプロジェクトです。
 
