@@ -1,5 +1,7 @@
 # Discord Pong
 
+![DiscordPong](https://github.com/user-attachments/assets/96f6238d-933e-417a-89c3-e21ab7992baf)
+
 Discord のアクティビティ上で Pong を遊ぶためのプロジェクトです。
 
 ## 使い方
