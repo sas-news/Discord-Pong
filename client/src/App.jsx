@@ -212,14 +212,18 @@ const App = () => {
 
     let frameCount = 0;
     let fpsUpdateTime = performance.now();
+    let animationFrameId;
 
     // アニメーションループ
     const animate = () => {
-      requestAnimationFrame(animate);
+      animationFrameId = requestAnimationFrame(animate);
 
       const now = performance.now();
 
-      const deltaTime = (now - lastFrameTimeRef.current) / 1000;
+      const deltaTime = Math.min(
+        (now - lastFrameTimeRef.current) / 1000,
+        0.1
+      );
       lastFrameTimeRef.current = now;
 
       frameCount++;
@@ -410,6 +414,7 @@ const App = () => {
 
     // クリーンアップ関数
     return () => {
+      cancelAnimationFrame(animationFrameId);
       window.removeEventListener("keydown", handleKeyDown);
       window.removeEventListener("keyup", handleKeyUp);
       if (mountRef.current && renderer.domElement) {
